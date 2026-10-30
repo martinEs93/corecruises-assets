@@ -1,0 +1,19 @@
+name: Cruise Compass read-only egress probe
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/cruisecompass-egress-probe.yml
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check fixed public search and offer URLs
+        run: python3 scripts/cruisecompass_egress_probe.py
