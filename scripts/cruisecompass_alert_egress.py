@@ -21,7 +21,7 @@ from cruisecompass_egress_probe import GATE_RE, TOKEN_RE, is_gate, request
 API = "https://api.corecruises.info"
 ID_RE = re.compile(r"\A[A-Za-z0-9._:-]{1,128}\Z")
 JOB_RE = re.compile(r"\A[a-f0-9]{64}\Z")
-MAX_API_RESPONSE = 100_000
+MAX_API_RESPONSE = 250_000
 
 
 def api_post(path: str, data: dict, key: bytes) -> dict:
