@@ -14,7 +14,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit, parse_qsl
 
 from cruisecompass_egress_probe import GATE_RE, TOKEN_RE, is_gate, request
 
@@ -88,6 +88,51 @@ def fetch_offer(job: dict) -> bytes:
     return body
 
 
+def fetch_search(job: dict) -> bytes:
+    path = job.get("path")
+    if job.get("kind") != "search" or not JOB_RE.fullmatch(str(job.get("jobId", ""))) or not JOB_RE.fullmatch(str(job.get("searchHash", ""))):
+        raise ValueError("Invalid search job")
+    if not isinstance(path, str) or len(path) > 1500 or not path.startswith("/search?"):
+        raise ValueError("Invalid search path")
+    parsed = urlsplit(path)
+    if parsed.scheme or parsed.netloc or parsed.fragment or parsed.path != "/search":
+        raise ValueError("Search URL outside allowlist")
+    pairs = parse_qsl(parsed.query, keep_blank_values=True, strict_parsing=True)
+    params = dict(pairs)
+    allowed = {"t", "sdt", "bdt", "dur", "sort", "erw", "cab", "maxp"}
+    allowed.update(f"red[{i}]" for i in range(6))
+    allowed.update(f"region[{i}]" for i in range(2))
+    if len(pairs) != len(params) or not set(params).issubset(allowed) or params.get("t") != "K" or params.get("sort") != "pauf" or params.get("erw") != "2":
+        raise ValueError("Invalid search parameters")
+    for name in ("sdt", "bdt"):
+        if not re.fullmatch(r"20\d{2}-\d{2}-\d{2}", params.get(name, "")):
+            raise ValueError("Invalid search date")
+    if not re.fullmatch(r"\d{1,3}-\d{1,3}", params.get("dur", "")) or not any(name.startswith("red[") for name in params):
+        raise ValueError("Invalid search filter")
+    for name, value in params.items():
+        if name.startswith("red[") and value not in ("1", "7", "15", "14", "10", "9"):
+            raise ValueError("Invalid line")
+        if name.startswith("region[") and value not in ("10", "8", "7", "12", "14", "22", "17"):
+            raise ValueError("Invalid region")
+    if "cab" in params and params["cab"] not in ("1", "2", "3", "4"):
+        raise ValueError("Invalid cabin")
+    if "maxp" in params and (not params["maxp"].isdigit() or not 200 <= int(params["maxp"]) <= 200000):
+        raise ValueError("Invalid budget")
+    status, content_type, body = request("GET", path)
+    if status == 200 and is_gate(body):
+        token, gate = TOKEN_RE.search(body), GATE_RE.search(body)
+        if not token or not gate:
+            raise ValueError("Gate format invalid")
+        cookie = "xtgate=" + token.group(1).decode("ascii")
+        gate_path = path + "&_g=" + quote(gate.group(1).decode("ascii"), safe="")
+        status, content_type, body = request("GET", gate_path, cookie, path)
+        if 300 <= status < 400:
+            status, content_type, body = request("GET", path, cookie, gate_path)
+    if status != 200 or not content_type.lower().startswith(("text/html", "application/xhtml+xml")) or is_gate(body) or not 500 <= len(body) <= 1_600_000:
+        raise ValueError("Provider search unusable")
+    return body
+
+
 def main() -> int:
     key_hex = os.environ.get("CC_ALERT_EGRESS_KEY", "")
     if not re.fullmatch(r"[a-f0-9]{64}", key_hex):
@@ -95,7 +140,7 @@ def main() -> int:
         return 2
     key = bytes.fromhex(key_hex)
     jobs = api_post("/v1/internal/alert-egress/jobs", {}, key).get("jobs")
-    if not isinstance(jobs, list) or len(jobs) > 500:
+    if not isinstance(jobs, list) or len(jobs) > 520:
         print("Invalid job batch")
         return 2
     success = failed = 0
@@ -103,10 +148,11 @@ def main() -> int:
         try:
             if not isinstance(job, dict):
                 raise ValueError("Invalid job")
-            html = fetch_offer(job)
+            html = fetch_search(job) if job.get("kind") == "search" else fetch_offer(job)
+            payload = {"jobId": job["jobId"], "kind": "search", "searchHash": job["searchHash"], "htmlBase64": base64.b64encode(html).decode("ascii")} if job.get("kind") == "search" else {"jobId": job["jobId"], "type": job["type"], "cruiseId": job["cruiseId"], "airport": job["airport"], "htmlBase64": base64.b64encode(html).decode("ascii")}
             result = api_post(
                 "/v1/internal/alert-egress/result",
-                {"jobId": job["jobId"], "type": job["type"], "cruiseId": job["cruiseId"], "airport": job["airport"], "htmlBase64": base64.b64encode(html).decode("ascii")},
+                payload,
                 key,
             )
             if result.get("ok") is not True or result.get("status") not in ("ok", "unavailable"):
