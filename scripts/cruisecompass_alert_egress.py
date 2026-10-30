@@ -99,11 +99,13 @@ def fetch_search(job: dict) -> bytes:
         raise ValueError("Search URL outside allowlist")
     pairs = parse_qsl(parsed.query, keep_blank_values=True, strict_parsing=True)
     params = dict(pairs)
-    allowed = {"t", "sdt", "bdt", "dur", "sort", "erw", "cab", "maxp"}
+    allowed = {"t", "sdt", "bdt", "dur", "sort", "erw", "cab", "maxp", "hmi[0]"}
     allowed.update(f"red[{i}]" for i in range(6))
     allowed.update(f"region[{i}]" for i in range(2))
-    if len(pairs) != len(params) or not set(params).issubset(allowed) or params.get("t") != "K" or params.get("sort") != "pauf" or params.get("erw") != "2":
+    if len(pairs) != len(params) or not set(params).issubset(allowed) or params.get("t") not in ("K", "S", "NS") or params.get("sort") != "pauf" or params.get("erw") != "2":
         raise ValueError("Invalid search parameters")
+    if "hmi[0]" in params and (params["t"] != "S" or params["hmi[0]"] not in ("BER", "BRE", "CGN", "DRS", "DUS", "FRA", "HAM", "HAJ", "LEJ", "MUC", "NUE", "STR", "BSL", "VIE", "ZRH")):
+        raise ValueError("Invalid airport")
     for name in ("sdt", "bdt"):
         if not re.fullmatch(r"20\d{2}-\d{2}-\d{2}", params.get(name, "")):
             raise ValueError("Invalid search date")
