@@ -162,7 +162,21 @@ def main() -> int:
             success += 1
         except Exception as exc:
             failed += 1
-            print("Job failed:", type(exc).__name__)
+            # Only these fixed, source-controlled messages may appear in logs.
+            # Never log job identifiers, search paths, provider text or API bodies.
+            safe_reasons = {
+                "Invalid fixed offer job", "Invalid airport", "Gate format invalid",
+                "Provider response unusable", "Provider response too large",
+                "Invalid search job", "Invalid search path", "Search URL outside allowlist",
+                "Invalid search parameters", "Invalid search date", "Invalid search filter",
+                "Invalid line", "Invalid region", "Invalid cabin", "Invalid budget",
+                "Provider search unusable", "Result rejected", "Invalid fixed path",
+                "Response exceeded size limit", "API response signature or size invalid",
+                "API status invalid", "API format invalid",
+            }
+            reason = str(exc) if isinstance(exc, ValueError) and str(exc) in safe_reasons else type(exc).__name__
+            kind = "search" if isinstance(job, dict) and job.get("kind") == "search" else "offer"
+            print("Job failed:", kind, reason)
     print(json.dumps({"jobs": len(jobs), "successful": success, "failed": failed}, separators=(",", ":")))
     return 0 if failed == 0 and success == len(jobs) else 1
 
