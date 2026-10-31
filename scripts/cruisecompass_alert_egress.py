@@ -81,8 +81,14 @@ def fetch_offer(job: dict) -> bytes:
         status, content_type, body = request("GET", gate_path, cookie, path)
         if 300 <= status < 400:
             status, content_type, body = request("GET", path, cookie, gate_path)
-    if status != 200 or not content_type.lower().startswith(("text/html", "application/xhtml+xml")) or is_gate(body) or len(body) < 500:
-        raise ValueError("Provider response unusable")
+    if status != 200:
+        raise ValueError(f"Provider HTTP {status}" if 100 <= status <= 599 else "Provider HTTP invalid")
+    if not content_type.lower().startswith(("text/html", "application/xhtml+xml")):
+        raise ValueError("Provider content type invalid")
+    if is_gate(body):
+        raise ValueError("Provider gate unresolved")
+    if len(body) < 500:
+        raise ValueError("Provider response too short")
     if len(body) > 1_600_000:
         raise ValueError("Provider response too large")
     return body
@@ -167,6 +173,7 @@ def main() -> int:
             safe_reasons = {
                 "Invalid fixed offer job", "Invalid airport", "Gate format invalid",
                 "Provider response unusable", "Provider response too large",
+                "Provider content type invalid", "Provider gate unresolved", "Provider response too short",
                 "Invalid search job", "Invalid search path", "Search URL outside allowlist",
                 "Invalid search parameters", "Invalid search date", "Invalid search filter",
                 "Invalid line", "Invalid region", "Invalid cabin", "Invalid budget",
@@ -174,7 +181,10 @@ def main() -> int:
                 "Response exceeded size limit", "API response signature or size invalid",
                 "API status invalid", "API format invalid",
             }
-            reason = str(exc) if isinstance(exc, ValueError) and str(exc) in safe_reasons else type(exc).__name__
+            if isinstance(exc, ValueError) and re.fullmatch(r"Provider HTTP [1-5][0-9]{2}", str(exc)):
+                reason = str(exc)
+            else:
+                reason = str(exc) if isinstance(exc, ValueError) and str(exc) in safe_reasons else type(exc).__name__
             kind = "search" if isinstance(job, dict) and job.get("kind") == "search" else "offer"
             print("Job failed:", kind, reason)
     print(json.dumps({"jobs": len(jobs), "successful": success, "failed": failed}, separators=(",", ":")))
